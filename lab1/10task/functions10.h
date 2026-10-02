@@ -27,14 +27,16 @@ typedef enum {
     STATUS_ERR_NO_NUMBERS      // no numbers before stop
 } status_t;
 
+
+// stats
 typedef struct {
-    long long max_abs;   // максимальное по модулю (при равенстве модулей остаётся первое)
+    long long max_abs;
     long long sum;
-    int count;           // сколько корректных чисел учтено
+    int count;           // how many are counted
 } stats_t;
 
 typedef struct {
-    char str[REPR_COUNT][STR_SIZE];   // [0] - в введённой системе, дальше 9, 18, 27, 36
+    char str[REPR_COUNT][STR_SIZE]; // array of strings (66 = sign, 64, '\n')
     int base[REPR_COUNT];
 } repr_t;
 
@@ -49,7 +51,7 @@ int is_space(const int c){
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-// first symbol that is not space returns
+// first symbol that is not space returns through ungetc, reads spaces
 void skip_spaces(FILE *in){
     int c;
     while ((c = fgetc(in)) != EOF) {
@@ -60,25 +62,24 @@ void skip_spaces(FILE *in){
     }
 }
 
-// read 1 symbpl in buf
+// read 1 "word" in buf (before space)
 status_t read_lexeme(FILE *in, char **lexeme){
     if (in == NULL || lexeme == NULL)
         return STATUS_ERR_NULL_PTR;
-
-    skip_spaces(in);
+    skip_spaces(in); // 1. skipping spaces
 
     int c = fgetc(in);
     if (c == EOF)
-        return STATUS_END;
+        return STATUS_END; // 2. if end of input
 
     size_t cap = START_CAP, len = 0;
-    char *buf = (char *)malloc(cap);
+    char *buf = (char *)malloc(cap); // 3. creating buffer of 16 bytes
     if (buf == NULL)
         return STATUS_ERR_ALLOC;
 
     while (c != EOF && !is_space(c)) {
         if (len + 1 >= cap) {                 // +1 for '\0'
-            cap *= 2;
+            cap *= 2;   // 3. if buf is small, double the capacity
             char *tmp = (char *)realloc(buf, cap);
             if (tmp == NULL) {
                 free(buf);
@@ -89,8 +90,7 @@ status_t read_lexeme(FILE *in, char **lexeme){
         buf[len++] = (char)c;
         c = fgetc(in);
     }
-    buf[len] = '\0';
-
+    buf[len] = '\0'; // 4. ending the string, done
     *lexeme = buf;
     return STATUS_OK;
 }
@@ -101,11 +101,13 @@ int is_stop(const char *lexeme){
 
 status_t parse_base(const char *lexeme, int *base)
 {
+    // got some bs instead of number
     if (lexeme == NULL || base == NULL)
         return STATUS_ERR_NULL_PTR;
     if (*lexeme == '\0')
         return STATUS_ERR_BASE;
 
+    // collecting our number
     int value = 0;
     for (; *lexeme != '\0'; lexeme++) {
         if (*lexeme < '0' || *lexeme > '9')
@@ -128,6 +130,7 @@ status_t parse_number(const char *lexeme, const int base, long long *result)
     if (base < MIN_BASE || base > MAX_BASE)
         return STATUS_ERR_BASE;
 
+    // checking the sign
     int negative = 0;
     if (*lexeme == '-' || *lexeme == '+') {
         negative = (*lexeme == '-');
@@ -144,32 +147,33 @@ status_t parse_number(const char *lexeme, const int base, long long *result)
         if (d < 0 || d >= base)
             return STATUS_ERR_LEXEME;
         if (value > (limit - (unsigned long long)d) / (unsigned long long)base)
+            // avoiding overflow:
+            // value*base + d <= limit equals value <= (limit -d)/base
             return STATUS_ERR_OVERFLOW;
         value = value * (unsigned long long)base + (unsigned long long)d;
     }
 
     if (!negative)
         *result = (long long)value;
-    else if (value == (unsigned long long)LLONG_MAX + 1ULL)
+    else if (value == (unsigned long long)LLONG_MAX + 1ULL) // since the range is assymetrical
         *result = LLONG_MIN;
     else
         *result = -(long long)value;
     return STATUS_OK;
 }
 
-unsigned long long abs_value(const long long x)
-{
+unsigned long long abs_value(const long long x){
     return (x < 0) ? 0ULL - (unsigned long long)x : (unsigned long long)x;
 }
 
-void init_stats(stats_t *stats)
-{
+void init_stats(stats_t *stats){
     if (stats == NULL)
         return;
     stats->max_abs = 0;
     stats->sum = 0;
     stats->count = 0;
 }
+
 status_t add_number(stats_t *stats, const long long value)
 {
     if (stats == NULL)
