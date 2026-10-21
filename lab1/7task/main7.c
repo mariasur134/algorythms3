@@ -35,14 +35,31 @@ int parse_flag(const char *str, char *flag)
     return 1;
 }
 
+
+
+// DECEMBER: "одинаковые файлы"
 status_t check_different(const char *in1, const char *in2, const char *out)
 {
-    if (strcmp(in1, out) == 0)
+    char real_out[PATH_MAX]; // buffer for output file path
+    char real_in[PATH_MAX]; // buffer for input files (1st then 2nd if it's given)
+
+    // output file doesn't exist, nothing to compare to
+    if (realpath(out, real_out) == NULL)
+        return STATUS_OK;
+
+    // checking absolut path of 1st file with output file
+    if (realpath(in1, real_in) != NULL && strcmp(real_in, real_out) == 0)
         return STATUS_ERR_SAME_FILE;
-    if (in2 != NULL && strcmp(in2, out) == 0)
+
+    // checking that 2nd file exists (is given), then compare paths
+    if (in2 != NULL && realpath(in2, real_in) != NULL && strcmp(real_in, real_out) == 0)
         return STATUS_ERR_SAME_FILE;
+
+    // all good
     return STATUS_OK;
 }
+
+
 
 status_t run(const char flag, char *argv[])
 {
