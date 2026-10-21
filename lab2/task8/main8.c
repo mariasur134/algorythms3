@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "functions8.h"
 
+
 int main(void){
     char* r = NULL;
     status_t s;
