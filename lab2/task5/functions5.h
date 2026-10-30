@@ -15,8 +15,7 @@ typedef enum {
     STATUS_ERR_DIGIT,     // empty string or invalid dig
     STATUS_ERR_OVERFLOW,  // number does not fit in int / one specifier is too long
     STATUS_ERR_IO,        // fwrite failed
-    STATUS_ERR_ALLOC,     // malloc failed
-    STATUS_ERR_BASE       // base is not in 2..36
+    STATUS_ERR_ALLOC    // malloc failed
 } status_t;
 
 
@@ -78,7 +77,7 @@ status_t zeckendorf_str(unsigned int n, char* out){
 
 // %Cv / %CV - int to base upper lower leters itd
 status_t int_to_base(int n, int base, int upper, char* out){
-    if (!valid_base(base)) return STATUS_ERR_BASE;
+    if (!valid_base(base)) base = 10;
     long long v = n;
 
     char tmp[40];
@@ -101,7 +100,7 @@ status_t int_to_base(int n, int base, int upper, char* out){
 // %to / %TO
 status_t base_to_int(const char* s, int base, int upper, int* res){
     if (s == NULL || res == NULL) return STATUS_ERR_NULL;
-    if (!valid_base(base)) return STATUS_ERR_BASE;
+    if (!valid_base(base)) base = 10;
 
     int neg = (s[0] == '-');
     if (s[neg] == '\0') return STATUS_ERR_DIGIT;
@@ -332,7 +331,6 @@ void print_status(int res){
         case STATUS_ERR_OVERFLOW: printf("Error: number or specifier is too long\n"); break;
         case STATUS_ERR_IO:       printf("Error: failed to write to file\n"); break;
         case STATUS_ERR_ALLOC:    printf("Error: failed to allocate memory\n"); break;
-        case STATUS_ERR_BASE:     printf("Error: base must be in 2..36\n"); break;
         default:                  printf("Error: unknown error\n"); break;
     }
 }
