@@ -13,8 +13,7 @@ typedef enum {
     STATUS_EOF,
     STATUS_ERR_NULL,
     STATUS_ERR_FORMAT,   // unknown specifier
-    STATUS_ERR_MATCH,     // input does not match
-    STATUS_ERR_BASE      // base must be in 2..36
+    STATUS_ERR_MATCH     // input does not match
 } status_t;
 
 
@@ -115,7 +114,7 @@ status_t scan_zeckendorf(reader_t* r, unsigned int* out){
 // %Cv %CV
 status_t scan_base(reader_t* r, int* out, int base, int upper){
     if (out == NULL) return STATUS_ERR_NULL;
-    if (base < 2 || base > 36) return STATUS_ERR_BASE;
+    if (base < 2 || base > 36) base = 10;
     skip_spaces(r);
 
     int neg = (peek(r) == '-');
@@ -224,7 +223,7 @@ status_t scan_input(reader_t* r, const char* fmt, va_list* ap, int* count){
 
 int finish_scan(status_t st, int count){
     if (st == STATUS_EOF && count == 0) return EOF;
-    if (st == STATUS_ERR_NULL || st == STATUS_ERR_FORMAT || st == STATUS_ERR_BASE) return -(int)st;
+    if (st == STATUS_ERR_NULL || st == STATUS_ERR_FORMAT) return -(int)st;
     return count;
 }
 
@@ -257,7 +256,6 @@ void print_scan_result(int res){
     if (res >= 0) printf("Stored values: %d\n", res);
     else if (res == EOF) printf("Error: input ended before the first value\n");
     else if (-res == STATUS_ERR_NULL) printf("Error: NULL pointer\n");
-    else if (-res == STATUS_ERR_BASE) printf("Error: base must be fprm 2 to 36\n");
     else printf("Error: unknown or unsupported specifier\n");
 }
 
