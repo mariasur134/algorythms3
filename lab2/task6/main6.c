@@ -19,15 +19,17 @@ int main(void) {
     printf("\n3) 1/2 invalid data\n");
     print_scan_result(oversscanf("XIV abc", "%Ro %Ro", &a, &b));
 
-    printf("\n4) errors: base, null, unknown spec\n");
+    printf("\n4) base = 99 -> base = 10\n");
     print_scan_result(oversscanf("1", "%Cv", &a, 99));
+
+    printf("\n5) errors: null, unknown spec\n");
     print_scan_result(oversscanf(NULL, "%d", &a));
     print_scan_result(oversscanf("1", "%q", &a));
 
-    printf("\n5) empty\n");
+    printf("\n6) empty\n");
     print_scan_result(oversscanf("", "%Ro", &a));
 
-    printf("\n6) file\n");
+    printf("\n7) file\n");
     FILE* f = fopen("test6.txt", "r");
     if (f == NULL){
         printf("Error: cannot open input.txt\n");
