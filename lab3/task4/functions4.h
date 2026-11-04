@@ -12,7 +12,7 @@
 #define INDEX_LEN 6          // postal index: 6 digits
 #define ID_LEN 14            // mail identifier: 14 digits
 #define DATETIME_LEN 19      // "dd:MM:yyyy hh:mm:ss"
-#define START_CAPACITY 4
+#define LINE_SIZE 256
 
 typedef enum {
     STATUS_OK,
@@ -42,16 +42,14 @@ status_t string_create(String* s, const char* src){
     if (s == NULL || src == NULL)
         return STATUS_ERR_NULL_PTR;
     size_t len = strlen(src);
+    s->data = NULL;
+    s->length = 0;
     if (len >= (size_t)INT_MAX)
         return STATUS_ERR_INPUT;
-    char* buf = (char*)malloc(len + 1);
-    if (buf == NULL){
-        s->data = NULL;
-        s->length = 0;
+    s->data = (char*)malloc(len + 1);
+    if (s->data == NULL)
         return STATUS_ERR_ALLOC;
-    }
-    memcpy(buf, src, len + 1);
-    s->data = buf;
+    memcpy(s->data, src, len + 1);
     s->length = (int)len;
     return STATUS_OK;
 }
@@ -65,32 +63,26 @@ void string_destroy(String* s){
     s->length = 0;
 }
 
-// lexicographic comparator: <0, 0, >0 (NULL is smaller than any string)
+// lexicographic comparator: <0, 0, >0
 int string_compare_lex(const String* a, const String* b){
-    if (a == NULL || a->data == NULL)
-        return (b == NULL || b->data == NULL) ? 0 : -1;
-    if (b == NULL || b->data == NULL)
-        return 1;
     return strcmp(a->data, b->data);
 }
 
-// equivalence relation: 1 if the strings are equal, 0 otherwise
+// equivalence relation: 1 if the strings are equal
 int string_equal(const String* a, const String* b){
     return string_compare_lex(a, b) == 0;
 }
 
 // order relation: by length first, then lexicographically: <0, 0, >0
 int string_compare_order(const String* a, const String* b){
-    if (a == NULL || a->data == NULL || b == NULL || b->data == NULL)
-        return string_compare_lex(a, b);
     if (a->length != b->length)
         return (a->length < b->length) ? -1 : 1;
-    return strcmp(a->data, b->data);
+    return string_compare_lex(a, b);
 }
 
 // copy src into an existing String; old content is replaced only on success
 status_t string_copy(String* dst, const String* src){
-    if (dst == NULL || src == NULL || src->data == NULL)
+    if (dst == NULL || src == NULL)
         return STATUS_ERR_NULL_PTR;
     String tmp;
     status_t st = string_create(&tmp, src->data);
@@ -101,62 +93,53 @@ status_t string_copy(String* dst, const String* src){
     return STATUS_OK;
 }
 
-// copy src into a new String placed in the heap; free with string_free
+// copy src into a new String placed in the heap; free it with string_free
 status_t string_clone(const String* src, String** result){
-    if (result == NULL)
+    if (src == NULL || result == NULL)
         return STATUS_ERR_NULL_PTR;
-    *result = NULL;
-    if (src == NULL || src->data == NULL)
-        return STATUS_ERR_NULL_PTR;
-    String* s = (String*)malloc(sizeof(String));
-    if (s == NULL)
+    *result = (String*)malloc(sizeof(String));
+    if (*result == NULL)
         return STATUS_ERR_ALLOC;
-    status_t st = string_create(s, src->data);
+    status_t st = string_create(*result, src->data);
     if (st != STATUS_OK){
-        free(s);
-        return st;
+        free(*result);
+        *result = NULL;
     }
-    *result = s;
-    return STATUS_OK;
+    return st;
 }
 
 // free a String created by string_clone (content and the struct itself)
 void string_free(String* s){
-    if (s == NULL)
-        return;
     string_destroy(s);
     free(s);
 }
 
-// append the content of src to dst; src may be the same object as dst
+// append src to dst; src may be the same object as dst
 status_t string_concat(String* dst, const String* src){
-    if (dst == NULL || dst->data == NULL || src == NULL || src->data == NULL)
+    if (dst == NULL || src == NULL)
         return STATUS_ERR_NULL_PTR;
-    size_t len_dst = (size_t)dst->length;
-    size_t len_src = (size_t)src->length;
+    size_t len_dst = (size_t)dst->length, len_src = (size_t)src->length;
     if (len_dst + len_src >= (size_t)INT_MAX)
         return STATUS_ERR_INPUT;
-    char* buf = (char*)realloc(dst->data, len_dst + len_src + 1);
+    char* buf = (char*)malloc(len_dst + len_src + 1);
     if (buf == NULL)
         return STATUS_ERR_ALLOC;
-    // if src == dst, its data pointer is stale after realloc: use the new buffer
-    const char* from = (src == dst) ? buf : src->data;
-    memcpy(buf + len_dst, from, len_src);
-    buf[len_dst + len_src] = '\0';
+    memcpy(buf, dst->data, len_dst);
+    memcpy(buf + len_dst, src->data, len_src + 1);
+    free(dst->data);
     dst->data = buf;
     dst->length = (int)(len_dst + len_src);
     return STATUS_OK;
 }
 
-/* ======================= Part 2: Mail, Address, Post ======================= */
+/* ======================= Part 2: Address, Mail, Post ======================= */
 
 typedef struct {
-    String city;        // not empty
-    String street;      // not empty
-    int house;          // natural number
-    String building;    // may be empty
-    int apartment;      // natural number
-    String index;       // 6 digits
+    String city, street;    // not empty
+    int house;              // natural number
+    String building;        // may be empty
+    int apartment;          // natural number
+    String index;           // 6 digits
 } Address;
 
 typedef struct {
@@ -171,15 +154,13 @@ typedef struct {
 } Mail;
 
 typedef struct {
-    Address* office;    // address of the current post office
-    Mail* mails;        // dynamic array, always sorted by (index, id)
+    Address* office;        // address of the current post office
+    Mail* mails;            // dynamic array, always sorted by (index, id)
     int count;
     int capacity;
 } Post;
 
 void address_destroy(Address* a){
-    if (a == NULL)
-        return;
     string_destroy(&a->city);
     string_destroy(&a->street);
     string_destroy(&a->building);
@@ -187,57 +168,26 @@ void address_destroy(Address* a){
 }
 
 void mail_destroy(Mail* m){
-    if (m == NULL)
-        return;
     address_destroy(&m->address);
     string_destroy(&m->id);
     string_destroy(&m->created);
     string_destroy(&m->deadline);
 }
 
-// zero all fields so that destroy functions are safe on a partly filled object
-void address_init(Address* a){
-    a->city.data = a->street.data = a->building.data = a->index.data = NULL;
-    a->city.length = a->street.length = a->building.length = a->index.length = 0;
-    a->house = 0;
-    a->apartment = 0;
-}
-
-void mail_init(Mail* m){
-    address_init(&m->address);
-    m->weight = 0.0;
-    m->id.data = m->created.data = m->deadline.data = NULL;
-    m->id.length = m->created.length = m->deadline.length = 0;
-    m->created_key = 0;
-    m->deadline_key = 0;
-    m->delivered = 0;
-}
-
-void post_init(Post* p){
-    p->office = NULL;
-    p->mails = NULL;
-    p->count = 0;
-    p->capacity = 0;
-}
-
 void post_destroy(Post* p){
-    if (p == NULL)
-        return;
     for (int i = 0; i < p->count; i++)
         mail_destroy(&p->mails[i]);
     free(p->mails);
-    if (p->office != NULL){
+    if (p->office != NULL)
         address_destroy(p->office);
-        free(p->office);
-    }
-    post_init(p);
+    free(p->office);
 }
 
-/* ---------- validation (no input / output here) ---------- */
+/* ---------- validation ---------- */
 
 // 1 if s consists of exactly count digits
 int is_digits(const char* s, int count){
-    if (s == NULL || (int)strlen(s) != count)
+    if ((int)strlen(s) != count)
         return 0;
     for (int i = 0; i < count; i++)
         if (!isdigit((unsigned char)s[i]))
@@ -247,15 +197,13 @@ int is_digits(const char* s, int count){
 
 // natural number: only digits, value in [1, INT_MAX]
 status_t parse_natural(const char* s, int* result){
-    if (s == NULL || result == NULL)
-        return STATUS_ERR_NULL_PTR;
+    long long v = 0;
     if (*s == '\0')
         return STATUS_ERR_INPUT;
-    long long v = 0;
-    for (const char* p = s; *p != '\0'; p++){
-        if (!isdigit((unsigned char)*p))
+    for (; *s != '\0'; s++){
+        if (!isdigit((unsigned char)*s))
             return STATUS_ERR_INPUT;
-        v = v * 10 + (*p - '0');
+        v = v * 10 + (*s - '0');
         if (v > INT_MAX)
             return STATUS_ERR_INPUT;
     }
@@ -267,8 +215,6 @@ status_t parse_natural(const char* s, int* result){
 
 // non-negative real number: digits with at most one '.', no sign, no exponent
 status_t parse_weight(const char* s, double* result){
-    if (s == NULL || result == NULL)
-        return STATUS_ERR_NULL_PTR;
     int digits = 0, dots = 0;
     for (const char* p = s; *p != '\0'; p++){
         if (isdigit((unsigned char)*p))
@@ -280,57 +226,37 @@ status_t parse_weight(const char* s, double* result){
     }
     if (digits == 0 || dots > 1)
         return STATUS_ERR_INPUT;
-    double v = strtod(s, NULL);
-    if (!isfinite(v))
-        return STATUS_ERR_INPUT;
-    *result = v;
-    return STATUS_OK;
-}
-
-int is_leap_year(int y){
-    return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    *result = strtod(s, NULL);
+    return isfinite(*result) ? STATUS_OK : STATUS_ERR_INPUT;
 }
 
 int days_in_month(int y, int m){
     static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    if (m == 2 && is_leap_year(y))
-        return 29;
-    return days[m - 1];
+    int leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    return (m == 2 && leap) ? 29 : days[m - 1];
 }
 
-// build the number yyyyMMddhhmmss, which keeps the chronological order
+// number yyyyMMddhhmmss, which keeps the chronological order
 long long make_time_key(int y, int mo, int d, int h, int mi, int s){
     return ((((((long long)y * 100 + mo) * 100 + d) * 100 + h) * 100 + mi) * 100) + s;
 }
 
-// check "dd:MM:yyyy hh:mm:ss" and compute its time key
+// check "dd:MM:yyyy hh:mm:ss" (format, ranges, leap years) and compute its key
 status_t parse_datetime(const char* s, long long* key){
-    if (s == NULL || key == NULL)
-        return STATUS_ERR_NULL_PTR;
+    int d, mo, y, h, mi, sec;
+    // sscanf is tolerant to spaces and signs, so check the exact shape first
     if ((int)strlen(s) != DATETIME_LEN)
         return STATUS_ERR_INPUT;
     for (int i = 0; i < DATETIME_LEN; i++){
-        char c = s[i];
-        if (i == 2 || i == 5 || i == 13 || i == 16){
-            if (c != ':')
-                return STATUS_ERR_INPUT;
-        }
-        else if (i == 10){
-            if (c != ' ')
-                return STATUS_ERR_INPUT;
-        }
-        else if (!isdigit((unsigned char)c))
+        char sep = (i == 10) ? ' ' : ':';
+        int is_sep = (i == 2 || i == 5 || i == 10 || i == 13 || i == 16);
+        if (is_sep ? s[i] != sep : !isdigit((unsigned char)s[i]))
             return STATUS_ERR_INPUT;
     }
-    int d = (s[0] - '0') * 10 + (s[1] - '0');
-    int mo = (s[3] - '0') * 10 + (s[4] - '0');
-    int y = (s[6] - '0') * 1000 + (s[7] - '0') * 100 + (s[8] - '0') * 10 + (s[9] - '0');
-    int h = (s[11] - '0') * 10 + (s[12] - '0');
-    int mi = (s[14] - '0') * 10 + (s[15] - '0');
-    int sec = (s[17] - '0') * 10 + (s[18] - '0');
-    if (y < 1 || mo < 1 || mo > 12 || d < 1 || d > days_in_month(y, mo))
+    if (sscanf(s, "%d:%d:%d %d:%d:%d", &d, &mo, &y, &h, &mi, &sec) != 6)
         return STATUS_ERR_INPUT;
-    if (h > 23 || mi > 59 || sec > 59)
+    if (y < 1 || mo < 1 || mo > 12 || d < 1 || d > days_in_month(y, mo)
+        || h > 23 || mi > 59 || sec > 59)
         return STATUS_ERR_INPUT;
     *key = make_time_key(y, mo, d, h, mi, sec);
     return STATUS_OK;
@@ -338,33 +264,25 @@ status_t parse_datetime(const char* s, long long* key){
 
 // current system time as a time key
 status_t get_now_key(long long* key){
-    if (key == NULL)
-        return STATUS_ERR_NULL_PTR;
     time_t t = time(NULL);
-    if (t == (time_t)-1)
-        return STATUS_ERR_TIME;
     struct tm* lt = localtime(&t);
-    if (lt == NULL)
+    if (t == (time_t)-1 || lt == NULL)
         return STATUS_ERR_TIME;
     *key = make_time_key(lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday,
                          lt->tm_hour, lt->tm_min, lt->tm_sec);
     return STATUS_OK;
 }
 
-/* ---------- Post logic (no input / output here) ---------- */
+/* ---------- Post logic ---------- */
 
 // order of the mails: recipient index first, then identifier
 int mail_compare(const Mail* a, const Mail* b){
     int c = string_compare_lex(&a->address.index, &b->address.index);
-    if (c != 0)
-        return c;
-    return string_compare_lex(&a->id, &b->id);
+    return c != 0 ? c : string_compare_lex(&a->id, &b->id);
 }
 
 // find a mail by identifier; position is stored to *pos
 status_t post_find(const Post* p, const char* id, int* pos){
-    if (p == NULL || id == NULL || pos == NULL)
-        return STATUS_ERR_NULL_PTR;
     for (int i = 0; i < p->count; i++){
         if (strcmp(p->mails[i].id.data, id) == 0){
             *pos = i;
@@ -376,23 +294,20 @@ status_t post_find(const Post* p, const char* id, int* pos){
 
 // put the mail into the sorted array; on success the post owns the mail
 status_t post_add(Post* p, const Mail* m){
-    if (p == NULL || m == NULL)
-        return STATUS_ERR_NULL_PTR;
-    int tmp;
-    if (post_find(p, m->id.data, &tmp) == STATUS_OK)
+    int pos;
+    if (post_find(p, m->id.data, &pos) == STATUS_OK)
         return STATUS_ERR_DUPLICATE;
     if (p->count == p->capacity){
-        int new_cap = (p->capacity == 0) ? START_CAPACITY : p->capacity * 2;
+        int new_cap = (p->capacity == 0) ? 4 : p->capacity * 2;
         Mail* buf = (Mail*)realloc(p->mails, (size_t)new_cap * sizeof(Mail));
         if (buf == NULL)
             return STATUS_ERR_ALLOC;
         p->mails = buf;
         p->capacity = new_cap;
     }
-    // find the first element which is greater, shift the tail, insert
-    int pos = 0;
-    while (pos < p->count && mail_compare(&p->mails[pos], m) < 0)
-        pos++;
+    // first element which is greater than the new one, shift the tail, insert
+    for (pos = 0; pos < p->count && mail_compare(&p->mails[pos], m) < 0; pos++)
+        ;
     memmove(&p->mails[pos + 1], &p->mails[pos], (size_t)(p->count - pos) * sizeof(Mail));
     p->mails[pos] = *m;
     p->count++;
@@ -414,10 +329,9 @@ status_t post_remove(Post* p, const char* id){
 status_t post_set_delivered(Post* p, const char* id){
     int pos;
     status_t st = post_find(p, id, &pos);
-    if (st != STATUS_OK)
-        return st;
-    p->mails[pos].delivered = 1;
-    return STATUS_OK;
+    if (st == STATUS_OK)
+        p->mails[pos].delivered = 1;
+    return st;
 }
 
 // order by creation time (old first), ties by identifier
@@ -429,12 +343,10 @@ int compare_by_created(const void* pa, const void* pb){
     return string_compare_lex(&a->id, &b->id);
 }
 
-// collect delivered mails, or mails not delivered whose deadline is before now;
-// result is a malloc'ed array of pointers (may be NULL when *n == 0)
-status_t post_collect(const Post* p, filter_t filter, long long now_key,
+// collect delivered mails, or not delivered ones whose deadline is before now;
+// result is a malloc'ed array of pointers sorted by creation time
+status_t post_collect(const Post* p, filter_t filter, long long now,
                       const Mail*** result, int* n){
-    if (p == NULL || result == NULL || n == NULL)
-        return STATUS_ERR_NULL_PTR;
     *result = NULL;
     *n = 0;
     if (p->count == 0)
@@ -442,259 +354,130 @@ status_t post_collect(const Post* p, filter_t filter, long long now_key,
     const Mail** list = (const Mail**)malloc((size_t)p->count * sizeof(const Mail*));
     if (list == NULL)
         return STATUS_ERR_ALLOC;
-    int cnt = 0;
     for (int i = 0; i < p->count; i++){
         const Mail* m = &p->mails[i];
-        int take = (filter == FILTER_DELIVERED)
-                       ? m->delivered
-                       : (!m->delivered && m->deadline_key < now_key);
-        if (take)
-            list[cnt++] = m;
+        if (filter == FILTER_DELIVERED ? m->delivered
+                                       : (!m->delivered && m->deadline_key < now))
+            list[(*n)++] = m;
     }
-    qsort(list, (size_t)cnt, sizeof(const Mail*), compare_by_created);
+    qsort(list, (size_t)*n, sizeof(const Mail*), compare_by_created);
     *result = list;
-    *n = cnt;
     return STATUS_OK;
 }
 
 /* ---------- output ---------- */
 
 void print_status(status_t st){
-    switch (st){
-        case STATUS_OK:            break;
-        case STATUS_ERR_NULL_PTR:  printf("Error: null pointer\n"); break;
-        case STATUS_ERR_ALLOC:     printf("Error: failed to allocate memory\n"); break;
-        case STATUS_ERR_INPUT:     printf("Error: wrong value or format\n"); break;
-        case STATUS_ERR_NOT_FOUND: printf("Error: mail with such identifier not found\n"); break;
-        case STATUS_ERR_DUPLICATE: printf("Error: mail with such identifier already exists\n"); break;
-        case STATUS_ERR_EOF:       printf("Input ended\n"); break;
-        case STATUS_ERR_TIME:      printf("Error: system time is not available\n"); break;
-        default:                   printf("Other status\n"); break;
-    }
+    static const char* const text[] = {
+        "ok", "null pointer", "failed to allocate memory", "wrong value or format",
+        "mail with such identifier not found", "mail with such identifier already exists",
+        "input ended", "system time is not available"
+    };
+    if (st != STATUS_OK)
+        printf("Error: %s\n", text[st]);
 }
 
 void print_address(const Address* a){
-    printf("%s, %s, house %d", a->index.data, a->city.data, a->house);
-    printf(", street %s", a->street.data);
+    printf("%s, %s, street %s, house %d", a->index.data, a->city.data, a->street.data, a->house);
     if (a->building.length > 0)
         printf(", building %s", a->building.data);
     printf(", apartment %d", a->apartment);
 }
 
 void print_mail(const Mail* m){
-    printf("Mail %s\n", m->id.data);
-    printf("  recipient: ");
+    printf("Mail %s\n  recipient: ", m->id.data);
     print_address(&m->address);
-    printf("\n  weight:    %.3f\n", m->weight);
-    printf("  created:   %s\n", m->created.data);
-    printf("  deadline:  %s\n", m->deadline.data);
-    printf("  status:    %s\n", m->delivered ? "delivered" : "not delivered");
+    printf("\n  weight:    %.3f\n  created:   %s\n  deadline:  %s\n  status:    %s\n",
+           m->weight, m->created.data, m->deadline.data,
+           m->delivered ? "delivered" : "not delivered");
 }
 
-void print_mail_list(const Mail** list, int n){
-    if (n == 0){
-        printf("(nothing found)\n");
-        return;
-    }
+void print_mails(const Mail* mails, const Mail** list, int n){
     for (int i = 0; i < n; i++)
-        print_mail(list[i]);
-    printf("Total: %d\n", n);
+        print_mail(list != NULL ? list[i] : &mails[i]);
+    printf(n == 0 ? "(nothing found)\n" : "Total: %d\n", n);
 }
 
-void print_all_mails(const Post* p){
-    if (p->count == 0){
-        printf("(post is empty)\n");
-        return;
-    }
-    for (int i = 0; i < p->count; i++)
-        print_mail(&p->mails[i]);
-    printf("Total: %d\n", p->count);
-}
+/* ---------- input: one prompt, one line, one validated value ---------- */
 
-/* ---------- input (prompts + validation loops) ---------- */
-
-// read a whole line of any length (without '\n' and '\r'); caller frees it
-status_t read_line(char** line){
-    if (line == NULL)
-        return STATUS_ERR_NULL_PTR;
-    *line = NULL;
-    size_t cap = 32, len = 0;
-    char* buf = (char*)malloc(cap);
-    if (buf == NULL)
-        return STATUS_ERR_ALLOC;
-    int c;
-    while ((c = getchar()) != EOF && c != '\n'){
-        if (len + 1 >= cap){
-            char* nb = (char*)realloc(buf, cap * 2);
-            if (nb == NULL){
-                free(buf);
-                return STATUS_ERR_ALLOC;
-            }
-            buf = nb;
-            cap *= 2;
-        }
-        buf[len++] = (char)c;
-    }
-    if (c == EOF && len == 0){
-        free(buf);
+// prompt and read one line (without '\n') into buf
+status_t read_line(const char* prompt, char* buf, int size){
+    printf("%s", prompt);
+    fflush(stdout);
+    if (fgets(buf, size, stdin) == NULL)
         return STATUS_ERR_EOF;
+    size_t len = strcspn(buf, "\r\n");
+    if (buf[len] == '\0'){                      // line did not fit into buf
+        int c;
+        while ((c = getchar()) != EOF && c != '\n')
+            ;
+        return STATUS_ERR_INPUT;
     }
     buf[len] = '\0';
-    if (len > 0 && buf[len - 1] == '\r')
-        buf[len - 1] = '\0';
-    *line = buf;
     return STATUS_OK;
 }
 
-// remove spaces at the beginning and at the end (in place)
-void trim(char* s){
-    size_t len = strlen(s), start = 0;
-    while (len > 0 && isspace((unsigned char)s[len - 1]))
-        len--;
-    while (start < len && isspace((unsigned char)s[start]))
-        start++;
-    memmove(s, s + start, len - start);
-    s[len - start] = '\0';
+status_t read_string(const char* prompt, int allow_empty, String* out){
+    char buf[LINE_SIZE];
+    status_t st = read_line(prompt, buf, LINE_SIZE);
+    if (st == STATUS_OK && buf[0] == '\0' && !allow_empty)
+        st = STATUS_ERR_INPUT;
+    return st == STATUS_OK ? string_create(out, buf) : st;
 }
 
-// prompt and read one trimmed line
-status_t ask_line(const char* prompt, char** line){
-    printf("%s", prompt);
-    fflush(stdout);
-    status_t st = read_line(line);
-    if (st == STATUS_OK)
-        trim(*line);
-    return st;
-}
-
-// string, which can be empty if allow_empty is set
-status_t ask_string(const char* prompt, int allow_empty, String* out){
-    for (;;){
-        char* line = NULL;
-        status_t st = ask_line(prompt, &line);
-        if (st != STATUS_OK)
-            return st;
-        if (line[0] == '\0' && !allow_empty){
-            printf("Error: the string must not be empty\n");
-            free(line);
-            continue;
-        }
-        st = string_create(out, line);
-        free(line);
-        return st;
-    }
-}
-
-status_t ask_natural(const char* prompt, int* out){
-    for (;;){
-        char* line = NULL;
-        status_t st = ask_line(prompt, &line);
-        if (st != STATUS_OK)
-            return st;
-        st = parse_natural(line, out);
-        free(line);
-        if (st == STATUS_OK)
-            return STATUS_OK;
-        if (st != STATUS_ERR_INPUT)
-            return st;
-        printf("Error: a natural number is expected\n");
-    }
-}
-
-status_t ask_weight(const char* prompt, double* out){
-    for (;;){
-        char* line = NULL;
-        status_t st = ask_line(prompt, &line);
-        if (st != STATUS_OK)
-            return st;
-        st = parse_weight(line, out);
-        free(line);
-        if (st == STATUS_OK)
-            return STATUS_OK;
-        if (st != STATUS_ERR_INPUT)
-            return st;
-        printf("Error: a non-negative real number is expected, for example 2.5\n");
-    }
+status_t read_natural(const char* prompt, int* out){
+    char buf[LINE_SIZE];
+    status_t st = read_line(prompt, buf, LINE_SIZE);
+    return st == STATUS_OK ? parse_natural(buf, out) : st;
 }
 
 // string of exactly count digits
-status_t ask_digits(const char* prompt, int count, String* out){
-    for (;;){
-        char* line = NULL;
-        status_t st = ask_line(prompt, &line);
-        if (st != STATUS_OK)
-            return st;
-        if (!is_digits(line, count)){
-            printf("Error: exactly %d digits are expected\n", count);
-            free(line);
-            continue;
-        }
-        st = string_create(out, line);
-        free(line);
-        return st;
-    }
+status_t read_digits(const char* prompt, int count, String* out){
+    char buf[LINE_SIZE];
+    status_t st = read_line(prompt, buf, LINE_SIZE);
+    if (st == STATUS_OK && !is_digits(buf, count))
+        st = STATUS_ERR_INPUT;
+    return st == STATUS_OK ? string_create(out, buf) : st;
 }
 
-// time in format dd:MM:yyyy hh:mm:ss
-status_t ask_datetime(const char* prompt, String* out, long long* key){
-    for (;;){
-        char* line = NULL;
-        status_t st = ask_line(prompt, &line);
-        if (st != STATUS_OK)
-            return st;
-        st = parse_datetime(line, key);
-        if (st == STATUS_OK){
-            st = string_create(out, line);
-            free(line);
-            return st;
-        }
-        free(line);
-        if (st != STATUS_ERR_INPUT)
-            return st;
-        printf("Error: expected a real date in format dd:MM:yyyy hh:mm:ss\n");
-    }
+status_t read_datetime(const char* prompt, String* out, long long* key){
+    char buf[LINE_SIZE];
+    status_t st = read_line(prompt, buf, LINE_SIZE);
+    if (st == STATUS_OK)
+        st = parse_datetime(buf, key);
+    return st == STATUS_OK ? string_create(out, buf) : st;
 }
 
-status_t ask_address(Address* a){
-    status_t st = ask_string("City: ", 0, &a->city);
-    if (st == STATUS_OK) st = ask_string("Street: ", 0, &a->street);
-    if (st == STATUS_OK) st = ask_natural("House number: ", &a->house);
-    if (st == STATUS_OK) st = ask_string("Building (may be empty): ", 1, &a->building);
-    if (st == STATUS_OK) st = ask_natural("Apartment number: ", &a->apartment);
-    if (st == STATUS_OK) st = ask_digits("Postal index (6 digits): ", INDEX_LEN, &a->index);
+// fields of a failed read stay NULL, so address_destroy is always safe
+void address_init(Address* a){
+    memset(a, 0, sizeof(Address));
+}
+
+status_t read_address(Address* a){
+    address_init(a);
+    status_t st = read_string("City: ", 0, &a->city);
+    if (st == STATUS_OK) st = read_string("Street: ", 0, &a->street);
+    if (st == STATUS_OK) st = read_natural("House number: ", &a->house);
+    if (st == STATUS_OK) st = read_string("Building (may be empty): ", 1, &a->building);
+    if (st == STATUS_OK) st = read_natural("Apartment number: ", &a->apartment);
+    if (st == STATUS_OK) st = read_digits("Postal index (6 digits): ", INDEX_LEN, &a->index);
     return st;
 }
 
-// identifier: 14 digits, not used by another mail
-status_t ask_new_id(const Post* p, String* out){
-    for (;;){
-        status_t st = ask_digits("Mail identifier (14 digits): ", ID_LEN, out);
-        if (st != STATUS_OK)
-            return st;
-        int pos;
-        if (post_find(p, out->data, &pos) != STATUS_OK)
-            return STATUS_OK;
-        printf("Error: mail with such identifier already exists\n");
-        string_destroy(out);
-    }
-}
-
 // read all fields of a new mail; on error the partial mail must be destroyed
-status_t ask_mail(const Post* p, Mail* m){
-    mail_init(m);
-    status_t st = ask_address(&m->address);
-    if (st == STATUS_OK) st = ask_weight("Weight (kg): ", &m->weight);
-    if (st == STATUS_OK) st = ask_new_id(p, &m->id);
-    if (st == STATUS_OK) st = ask_datetime("Creation time (dd:MM:yyyy hh:mm:ss): ",
-                                           &m->created, &m->created_key);
-    while (st == STATUS_OK){
-        st = ask_datetime("Delivery deadline (dd:MM:yyyy hh:mm:ss): ",
-                          &m->deadline, &m->deadline_key);
-        if (st != STATUS_OK || m->deadline_key >= m->created_key)
-            break;
-        printf("Error: the deadline must not be earlier than the creation time\n");
-        string_destroy(&m->deadline);
-    }
+status_t read_mail(Mail* m){
+    char buf[LINE_SIZE];
+    memset(m, 0, sizeof(Mail));
+    status_t st = read_address(&m->address);
+    if (st == STATUS_OK) st = read_line("Weight (kg): ", buf, LINE_SIZE);
+    if (st == STATUS_OK) st = parse_weight(buf, &m->weight);
+    if (st == STATUS_OK) st = read_digits("Mail identifier (14 digits): ", ID_LEN, &m->id);
+    if (st == STATUS_OK) st = read_datetime("Creation time (dd:MM:yyyy hh:mm:ss): ",
+                                            &m->created, &m->created_key);
+    if (st == STATUS_OK) st = read_datetime("Delivery deadline (dd:MM:yyyy hh:mm:ss): ",
+                                            &m->deadline, &m->deadline_key);
+    if (st == STATUS_OK && m->deadline_key < m->created_key)
+        st = STATUS_ERR_INPUT;      // deadline earlier than creation
     return st;
 }
 
